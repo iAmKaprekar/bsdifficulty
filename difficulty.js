@@ -1,16 +1,60 @@
-import fs from 'fs'
-import path from 'path'
+import fs from 'fs';
+import path from 'path';
 
 const readFile = (filePath) => {
-  return JSON.parse(fs.readFileSync(path.resolve(__dirname, filePath)).toString())
-}
+  return JSON.parse(fs.readFileSync(path.resolve(__dirname, filePath)).toString());
+};
 
-const bpmInfo = readFile("BPMInfo.json")
-const info = readFile("Info.json")
-const mapData = readFile("ExpertPlusStandard.json")
+class Wall {
+  constructor(beat, duration, height, width, column) {
+    this.time = time(beat);
+    this.endTime = time(beat + duration);
+    this.wallType = wallType(height, width, column);
+  }
+};
 
-let bpm = info._beatsPerMinute
-const notes = []
+class Bomb {
+  constructor(beat, columnNumber, rowNumber) {
+    this.time = time(beat);
+    this.column = columns[columnNumber];
+    this.row = rows[rowNumber];
+  };
+};
+
+class Note {
+  constructor(handNumber, beat, columnNumber, rowNumber, directionNumber, chainData, startArc, endArc) {
+    this.hand = handNumber ? "right" : "left";
+    this.time = time(beat);
+    this.column = columns[columnNumber];
+    this.row = rows[rowNumber];
+    this.direction = directions[directionNumber];
+    this.chainData = chainData;
+    this.arcData = {
+      startArc: startArc,
+      endArc: endArc,
+    };
+  };
+};
+
+const info = readFile("Info.json");
+const mapData = readFile("ExpertPlusStandard.json");
+
+let bpm = info._beatsPerMinute;
+const mapObjects = [];
+
+const version = mapData.version[0]
+
+const legacy = version < 3;
+const meta = version > 3;
+
+const beatLabel = legacy ? '_time' : 'b' ;
+const columnLabel = legacy ? '_lineIndex' : 'x';
+const rowLabel = legacy ? '_lineLayer' : 'y';
+const colorLabel = legacy ? '_type' : 'c';
+const directionLabel = legacy ? '_cutDirection' : 'd';
+const durationLabel = legacy ? '_duration' : 'd';
+const widthLabel = legacy ? '_width' : 'w';
+const heightLabel = legacy ? '_height' : 'h';
 
 const directions = {
   0: "u",
@@ -22,32 +66,135 @@ const directions = {
   6: "dl",
   7: "dr",
   8: "a",
-}
+};
+
+const columns = {
+  0: "outleft",
+  1: "inleft",
+  2: "inright",
+  3: "outright",
+};
+
+const rows = {
+  0: "bottom",
+  1: "middle",
+  2: "top",
+};
+
+const wallType = (height, width, column) => {
+  if (width === 1 && (column === 0 || column === 3)) return "decorative";
+  if (height === 0 && (width > 2 || (column === 1 && width > 1))) throw new Error(`Illegal wall data detected: Height [${height}], Width [${width}], Column [${column}]`);
+  if (height === 2) {
+    if (column > 1) return "rightCeiling";
+    if ((column === 0 && width === 2) || (column === 1 && width === 1)) return "leftCeiling";
+    return "ceiling";
+  }
+  if (column > 1) return "right";
+  return "left";
+};
 
 const time = (beat) => {
-  return (beat / bpm) * 60000
-}
+  return (beat / bpm) * 60000;
+};
 
+// Notes
 for (const colorNote of mapData.colorNotes) {
-  notes.push({
-    beat: colorNote.b,
-    time: time(colorNote.b),
-    column: colorNote.x,
-    row: colorNote.y,
-    type: colorNote.c ? "left" : "right",
-    direction: directions[colorNote.d],
-  })
+  mapObjects.push(
+    new Note(
+      meta ? mapData.colorNotesData[colorNote.i][colorLabel] : colorNote[colorLabel],
+      colorNote[beatLabel],
+      meta ? mapData.colorNotesData[colorNote.i][columnLabel] : colorNote[columnLabel],
+      meta ? mapData.colorNotesData[colorNote.i][rowLabel] : colorNote[rowLabel],
+      meta ? mapData.colorNotesData[colorNote.i][directionLabel] : colorNote[directionLabel],
+      null,
+      false,
+      false
+    )
+  );
+};
+
+// Arcs & Chains
+if (version >= 3) {
+  let noteIndex = 0;
+  let backIndex = 0;
+  for (const arc of mapData[meta ? "arcs" : "sliders"]) {
+    while (mapObjects[noteIndex].time <= time(arc.tb)) {
+      if (
+        mapObjects[noteIndex].time === time(arc.tb) &&
+        mapObjects[noteIndex].row === rows[meta ? mapData.colorNotesData[arc.ti].y : arc.ty] &&
+        mapObjects[noteIndex].column === columns[meta ? mapData.colorNotesData[arc.ti].x : arc.tx] &&
+        mapObjects[noteIndex].hand === ((meta ? mapData.colorNotesData[arc.ti].c : arc.c) ? "right" : "left")
+      ) {
+        mapObjects[noteIndex].arcData.endArc = true;
+        backIndex = noteIndex - 1;
+        break;
+      } else {
+        noteIndex++;
+      };
+    };
+    while (mapObjects[backIndex]?.time >= time(arc.b)) {
+      if (
+        mapObjects[backIndex]?.time === time(meta ? arc.hb : arc.b) &&
+        mapObjects[backIndex]?.row === rows[meta ? mapData.colorNotesData[arc.hi].y : arc.y] &&
+        mapObjects[backIndex]?.column === columns[meta ? mapData.colorNotesData[arc.hi].x : arc.x] &&
+        mapObjects[backIndex]?.hand === ((meta ? mapData.colorNotesData[arc.hi].c : arc.c) ? "right" : "left")
+      ) {
+        mapObjects[backIndex].arcData.startArc = true;
+        break;
+      } else {
+        backIndex--;
+      };
+    }
+  };
+
+  noteIndex = 0;
+  toNextChain: for (const chain of mapData[meta ? "chains" : "burstSliders"]) {
+    while (mapObjects[noteIndex].time <= time(meta ? chain.hb : chain.b)) {
+      if (
+        mapObjects[noteIndex].time === time(meta ? chain.hb : chain.b) &&
+        mapObjects[noteIndex].row === rows[meta ? mapData.colorNotesData[chain.i].y : chain.y] &&
+        mapObjects[noteIndex].column === columns[meta ? mapData.colorNotesData[chain.i].x :chain.x] &&
+        mapObjects[noteIndex].hand === ((meta ? mapData.colorNotesData[chain.i].c : chain.c) ? "right" : "left")
+      ) {
+        mapObjects[noteIndex].chainData = {
+          endChain: time(chain.tb),
+          endDirection: directions[meta ? mapData.chainsData[chain.ci].d : chain.d],
+          endColumn: columns[meta ? mapData.chainsData[chain.ci].tx : chain.tx],
+          endRow: rows[meta ? mapData.chainsData[chain.ci].ty : chain.ty],
+          links: meta ? mapData.chainsData[chain.ci].c : chain.sc,
+          size: meta ? mapData.chainsData[chain.ci].s : chain.s,
+        };
+        continue toNextChain;
+      } else {
+        noteIndex++;
+      }
+    };
+    throw new Error("Chain with no head detected");
+  };
 }
 
+// Bombs
 for (const bombNote of mapData.bombNotes) {
-  notes.push({
-    beat: bombNote.b,
-    time: time(bombNote.b),
-    column: bombNote.x,
-    row: bombNote.y,
-    type: "bomb",
-    direction: "a",
-  })
-}
+  mapObjects.push(
+    new Bomb(
+      bombNote[beatLabel],
+      meta ? mapData.bombNotesData[bombNote.i][columnLabel] : bombNote[columnLabel],
+      meta ? mapData.bombNotesData[bombNote.i][rowLabel] : bombNote[rowLabel]
+    )
+  );
+};
 
-console.log(notes)
+// Walls
+for (const obstacle of mapData.obstacles) {
+  mapObjects.push(
+    new Wall(
+      obstacle[beatLabel],
+      meta ? mapData.obstaclesData[obstacle.i][durationLabel] : obstacle[durationLabel],
+      meta ? mapData.obstaclesData[obstacle.i][heightLabel] : obstacle[heightLabel],
+      meta ? mapData.obstaclesData[obstacle.i][widthLabel] : obstacle[widthLabel],
+      meta ? mapData.obstaclesData[obstacle.i][columnLabel] : obstacle[columnLabel]
+    )
+  );
+};
+
+console.log(mapObjects);
