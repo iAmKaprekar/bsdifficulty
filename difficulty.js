@@ -42,7 +42,13 @@ const mapData = readFile("ExpertPlusStandard.json");
 let bpm = info._beatsPerMinute;
 const mapObjects = [];
 
-const version = mapData.version[0]
+let version;
+
+if (mapData.version) {
+  version = mapData.version[0]
+} else {
+  version = mapData._version[0]
+}
 
 const legacy = version < 3;
 const meta = version > 3;
@@ -98,7 +104,10 @@ const time = (beat) => {
 };
 
 // Notes
-for (const colorNote of mapData.colorNotes) {
+for (const colorNote of mapData[legacy ? "_notes" : "colorNotes"]) {
+  if (colorNote[colorLabel] === 3) {
+    continue;
+  }
   mapObjects.push(
     new Note(
       meta ? mapData.colorNotesData[colorNote.i][colorLabel] : colorNote[colorLabel],
@@ -174,7 +183,10 @@ if (version >= 3) {
 }
 
 // Bombs
-for (const bombNote of mapData.bombNotes) {
+for (const bombNote of mapData[legacy ? "_notes" : "bombNotes"]) {
+  if (legacy && bombNote._type !== 3) {
+    continue;
+  }
   mapObjects.push(
     new Bomb(
       bombNote[beatLabel],
@@ -185,7 +197,7 @@ for (const bombNote of mapData.bombNotes) {
 };
 
 // Walls
-for (const obstacle of mapData.obstacles) {
+for (const obstacle of mapData[legacy ? "_obstacles" : "obstacles"]) {
   mapObjects.push(
     new Wall(
       obstacle[beatLabel],
