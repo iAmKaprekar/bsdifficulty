@@ -43,7 +43,6 @@ let bpm = info._beatsPerMinute;
 const mapObjects = [];
 
 let version;
-
 if (mapData.version) {
   version = mapData.version[0]
 } else {
@@ -209,4 +208,139 @@ for (const obstacle of mapData[legacy ? "_obstacles" : "obstacles"]) {
   );
 };
 
-console.log(mapObjects);
+mapObjects.sort((a, b) => a.time - b.time)
+
+// Factors
+const absoluteDirectionPenalty = Math.sqrt(2);
+const relativeDirectionPenalty = Math.cbrt(2);
+const absoluteHorizontalPenalty = Math.pow(2, 0.25);
+const absoluteVerticalPenalty = Math.cbrt(2);
+const relativeHorizontalPenalty = Math.cbrt(2);
+const relativeVerticalPenalty = Math.sqrt(2); 
+
+const factorAbsolutePosition = (noteGroup) => {
+  const leftColumnMultiplier = {
+    outleft: 1,
+    inleft: 0,
+    inright: 1,
+    outright: 2,
+  }
+  const rightColumnMultiplier = {
+    outleft: 2,
+    inleft: 1,
+    inright: 0,
+    outright: 1,
+  }
+  const rowMultiplier = {
+    top: 2,
+    middle: 1,
+    bottom: 0,
+  }
+  for (const note of noteGroup) {
+    if (note.hand === "left") note.difficulty *= Math.pow(absoluteHorizontalPenalty, leftColumnMultiplier[note.column])
+    if (note.hand === "right") note.difficulty *= Math.pow(absoluteHorizontalPenalty, rightColumnMultiplier[note.column])
+    note.difficulty *= Math.pow(absoluteVerticalPenalty, rowMultiplier[note.row])
+  }
+  // const swingDirections = {
+  //   left: "a",
+  //   right: "a",
+  // }
+  // for (const note of noteGroup) {
+  //   if (swingDirections[note.hand] !== note.direction && note.direction !== "a") {
+  //     if (swingDirections[note.hand] === "a") {
+  //       swingDirections[note.hand] = note.direction
+  //     } else throw new Error("Invalid arrow combination detected");
+  //   }
+  // }
+}
+
+// Find an object's local context and run its difficult factors
+let leftHand;
+let rightHand;
+
+mapObjects.forEach((object, index, array) => {
+  if (object instanceof Note && !object.difficulty) {
+    const noteGroup = [];
+    // Calculate the noteGroup (other notes within 33ms) and otherContext (all nearby walls and bombs)
+    for (let i = 0; array[index + i]?.time - object.time <= 100 / 3; i++) {
+      if (array[index + i] instanceof Note) {
+        array[index + i].difficulty = 1;
+        noteGroup.push(array[index + i])
+      }
+    }
+    factorAbsolutePosition(noteGroup);
+    // factorAbsoluteDirection(noteGroup);
+    // factorRelativeDirection(noteGroup);
+  }
+})
+
+// console.log(mapObjects)
+
+let skill = 1;
+
+const skillCurve = (num) => {
+  return num>=0?((-1/(2**num)+1)+1)/2:(-(-1/(2**-num)+1)+1)/2;
+}
+
+// FC Chance
+
+const fakeObjects = [];
+
+for (let i = 0; i < 100; i++) {
+  fakeObjects.push({difficulty: 2});
+}
+
+for (let i = 0; i < 10; i++) {
+  fakeObjects.push({difficulty: 10});
+}
+
+for (let i = 0; i < 64; i++) {
+  let fcChance = 1;
+  for (const object of fakeObjects) {
+    const chance = skillCurve(skill - object.difficulty);
+    fcChance *= chance
+  }
+  fcChance > 0.5 ? skill -= 2**(6-i) : skill += 2**(6-i);
+}
+
+console.log("FULL CLEAR: " + skill);
+
+// Survival Chance
+
+skill = 1;
+const basicQuantumHealth = [];
+
+for (let i = 0; i < 101; i++) {
+  basicQuantumHealth.push(0);
+}
+
+for (let i = 0; i < 64; i++) {
+  let quantumHealth = basicQuantumHealth.slice();
+  quantumHealth[100] = 1;
+
+  for (const object of fakeObjects) {
+    const newQuantumHealth = basicQuantumHealth.slice();
+    newQuantumHealth[0] = quantumHealth[0];
+    for (let j = 1; j < 101; j++) {
+      const chance = skillCurve(skill - object.difficulty);
+      if (j - 15 < 0) newQuantumHealth[0] += quantumHealth[j] * (1 - chance);
+      else newQuantumHealth[j - 15] += quantumHealth[j] * (1 - chance);
+      if (j === 100) newQuantumHealth[100] += quantumHealth[j] * chance;
+      else newQuantumHealth[j + 1] += quantumHealth[j] * chance;
+    }
+    // console.log(newQuantumHealth);
+    quantumHealth = newQuantumHealth.slice();
+  }
+  // console.log(quantumHealth.reduce((acc, curr) => acc + curr))
+  quantumHealth[0] <= 0.5 ? skill -= 2**(6-i) : skill += 2**(6-i);
+}
+
+console.log("SURVIVAL:    " + skill);
+
+// for (const object of mapObjects) {
+//   console.log("Difficulty: " + object.difficulty)
+//   const chance = (-1/2**(skill/object.difficulty)) + 1;
+//   console.log("Chance: " + chance);
+//   fcChance *= chance ? chance : 1;
+//   console.log(fcChance);
+// }
